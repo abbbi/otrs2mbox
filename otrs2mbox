@@ -1,0 +1,152 @@
+#!/usr/bin/python3
+"""Export a list of OTRS tickets to mbox file using
+ticketGet api"""
+import os
+import sys
+import json
+import argparse
+import asyncio
+import mailbox
+from email.message import EmailMessage
+import aiohttp
+
+
+async def toTxt(username, password, url):
+    payload = {
+        "UserLogin": username,
+        "Password": password,
+        "AllArticles": "1",
+        "Attachments": "1",
+    }
+    try:
+        print("Downloading ticket Data..")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=payload, verify_ssl=False) as r:
+                resp = await r.content.read()
+                await writeBox(resp)
+    except Exception as e:
+        print(f"Unable to fetch ticket {url}: {e}")
+        return
+
+
+async def writeBox(resp):
+    try:
+        data = json.loads(resp)
+    except json.decoder.JSONDecodeError as e:
+        print(f"Unable to parse json: {e}")
+        return
+
+    if len(data) < 1:
+        print("No valid json data found")
+        return
+
+    ticket = data["Ticket"][0]["TicketNumber"]
+    print(f"Processing: {ticket}")
+
+    target = f"{ticket}.mbox"
+
+    mb = mailbox.mbox(f"{target}")
+    for td in data["Ticket"]:
+        for article in td["Article"]:
+            # ignore system messages
+            if article["SenderType"] == "system":
+                continue
+            mail = EmailMessage()
+            mail["Subject"] = article["Subject"]
+            mail["From"] = article["From"]
+            mail["To"] = article["To"]
+            if article["MessageID"] != "":
+                mail.add_header("Message-ID", article["MessageID"])
+            try:
+                mail.set_content(article["Body"])
+            except UnicodeEncodeError:
+                # remove unsupported surrogates
+                recode = article["Body"].encode("utf-8", "ignore").decode("utf-8")
+                mail.set_content(recode)
+            if article["InReplyTo"] != "":
+                mail.add_header("In-Reply-To", article["InReplyTo"])
+            mail.is_draft = False
+            mb.add(mail.as_string())
+
+    mb.close()
+
+
+async def main():
+    API_URL = "/otrs/nph-genericinterface.pl/Webservice/getotrs/TicketGet/"
+    CONFIG = f"{os.path.expanduser('~')}/.getotrs"
+
+    url_required = 1
+    user_required = 1
+    pass_required = 1
+
+    username = None
+    password = None
+    otrs_url = None
+
+    config = None
+    if os.path.exists(CONFIG):
+        print(f"Using config: {CONFIG}")
+        try:
+            config = json.loads(open(CONFIG).read())
+
+            username = config["username"]
+            password = config["password"]
+            otrs_url = config["otrs_url"]
+
+            url_required = 0
+            user_required = 0
+            pass_required = 0
+        except json.decoder.JSONDecodeError as e:
+            print(f"Unable to parse config: {e}")
+            sys.exit(1)
+    else:
+        print(f"No config file: {CONFIG}")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--url", help="Base URL to otrs (http://host/)", type=str, required=url_required
+    )
+    parser.add_argument(
+        "--ticketlist",
+        help="File containing a list of tickets",
+        type=str,
+        required=1,
+    )
+    parser.add_argument(
+        "--user", help="OTRS Username", type=str, required=user_required
+    )
+    parser.add_argument("--pw", help="OTRS Password", type=str, required=pass_required)
+    parser.add_argument(
+        "--folder",
+        help="Folder to download stuff (default full subject ticket id)",
+        type=str,
+        required=0,
+    )
+    parser.add_argument(
+        "-u",
+        "--unpack",
+        help="Decompress downloaded files based on filetype (zip, tar.gz)",
+        action="store_true",
+        required=0,
+    )
+    args = parser.parse_args()
+
+    if not config:
+        username = args.user
+        password = args.pw
+        otrs_url = args.url
+
+    if not os.path.exists(args.ticketlist):
+        print(f"Error: specified ticket list {args.ticketlist} not found")
+        sys.exit(1)
+
+    with open(args.ticketlist, "r") as tlfh:
+        tl = tlfh.readlines()
+
+    for ticket in tl:
+        url = f"{otrs_url}{API_URL}{ticket}"
+        await toTxt(username, password, url)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
