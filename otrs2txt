@@ -1,13 +1,11 @@
 #!/usr/bin/python3
-"""Export a list of OTRS tickets to mbox file using
+"""Export a list of OTRS tickets to regular text files using
 ticketGet api"""
 import os
 import sys
 import json
 import argparse
 import asyncio
-import mailbox
-from email.message import EmailMessage
 import aiohttp
 
 
@@ -16,7 +14,7 @@ async def toTxt(username, password, url):
         "UserLogin": username,
         "Password": password,
         "AllArticles": "1",
-        "Attachments": "1",
+        "Attachments": "0",
     }
     try:
         print("Downloading ticket Data..")
@@ -43,32 +41,27 @@ async def writeBox(resp):
     ticket = data["Ticket"][0]["TicketNumber"]
     print(f"Processing: {ticket}")
 
-    target = f"{ticket}.mbox"
+    target = f"{ticket}.txt"
 
-    mb = mailbox.mbox(f"{target}")
+    tfh = open(target, "wb+")
     for td in data["Ticket"]:
         for article in td["Article"]:
             # ignore system messages
             if article["SenderType"] == "system":
                 continue
-            mail = EmailMessage()
-            mail["Subject"] = article["Subject"]
-            mail["From"] = article["From"]
-            mail["To"] = article["To"]
-            if article["MessageID"] != "":
-                mail.add_header("Message-ID", article["MessageID"])
-            try:
-                mail.set_content(article["Body"])
-            except UnicodeEncodeError:
-                # remove unsupported surrogates
-                recode = article["Body"].encode("utf-8", "ignore").decode("utf-8")
-                mail.set_content(recode)
-            if article["InReplyTo"] != "":
-                mail.add_header("In-Reply-To", article["InReplyTo"])
-            mail.is_draft = False
-            mb.add(mail.as_string())
+            if (
+                "To provide the best possible support please send us the following latest logfiles"
+                in article["Body"]
+            ):
+                continue
 
-    mb.close()
+            if article["Body"].lower() == "close":
+                continue
+            if article["Body"].lower() == "spam":
+                continue
+
+            tfh.write(article["Body"].encode(errors="replace"))
+    tfh.close()
 
 
 async def main():
@@ -116,19 +109,6 @@ async def main():
         "--user", help="OTRS Username", type=str, required=user_required
     )
     parser.add_argument("--pw", help="OTRS Password", type=str, required=pass_required)
-    parser.add_argument(
-        "--folder",
-        help="Folder to download stuff (default full subject ticket id)",
-        type=str,
-        required=0,
-    )
-    parser.add_argument(
-        "-u",
-        "--unpack",
-        help="Decompress downloaded files based on filetype (zip, tar.gz)",
-        action="store_true",
-        required=0,
-    )
     args = parser.parse_args()
 
     if not config:
