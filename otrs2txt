@@ -10,7 +10,7 @@ import aiohttp
 import aiofiles
 
 
-async def fetch(session, url, username, password):
+async def fetch(session, url, ticket, username, password):
     payload = {
         "UserLogin": username,
         "Password": password,
@@ -20,61 +20,47 @@ async def fetch(session, url, username, password):
     async with session.get(url, params=payload, verify_ssl=False) as response:
         if response.status != 200:
             response.raise_for_status()
-        return await response.content.read()
+        resp = await response.content.read()
+        data = json.loads(resp)
+        ticket = data["Ticket"][0]["TicketNumber"]
+        print(f"Processing: {ticket}")
+        target = f"{ticket}.txt"
+        async with aiofiles.open(target, "wb+") as tfh:
+            for td in data["Ticket"]:
+                for article in td["Article"]:
+                    # ignore system messages
+                    if article["SenderType"] == "system":
+                        continue
+                    if (
+                        "To provide the best possible support please send us the following latest logfiles"
+                        in article["Body"]
+                    ):
+                        continue
+
+                    if article["Body"].lower() == "close":
+                        continue
+                    if article["Body"].lower() == "spam":
+                        continue
+                    await tfh.write(article["Body"].encode(errors="replace"))
 
 
 async def toTxt(username, password, tl, otrs_url, API_URL):
-    connector = aiohttp.TCPConnector(limit=50)
+    connector = aiohttp.TCPConnector(limit=10)
     try:
         tasks = []
         async with aiohttp.ClientSession(connector=connector) as session:
             for ticket in tl:
                 url = f"{otrs_url}{API_URL}{ticket}"
                 print(f"Downloading {ticket}..")
-                task = asyncio.create_task(fetch(session, url, username, password))
+                task = asyncio.create_task(
+                    fetch(session, url, ticket, username, password)
+                )
                 tasks.append(task)
             results = await asyncio.gather(*tasks)
     except Exception as e:
         print(f"Unable to fetch ticket {url}: {e}")
-        return
 
-    for value in results:
-        await writeBox(value)
-
-
-async def writeBox(resp):
-    try:
-        data = json.loads(resp)
-    except json.decoder.JSONDecodeError as e:
-        print(f"Unable to parse json: {e}")
-        return
-
-    if len(data) < 1:
-        print("No valid json data found")
-        return
-
-    ticket = data["Ticket"][0]["TicketNumber"]
-    print(f"Processing: {ticket}")
-
-    target = f"{ticket}.txt"
-
-    async with aiofiles.open(target, "wb+") as tfh:
-        for td in data["Ticket"]:
-            for article in td["Article"]:
-                # ignore system messages
-                if article["SenderType"] == "system":
-                    continue
-                if (
-                    "To provide the best possible support please send us the following latest logfiles"
-                    in article["Body"]
-                ):
-                    continue
-
-                if article["Body"].lower() == "close":
-                    continue
-                if article["Body"].lower() == "spam":
-                    continue
-                await tfh.write(article["Body"].encode(errors="replace"))
+    return results
 
 
 async def main():
