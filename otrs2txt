@@ -88,6 +88,13 @@ async def main():
     parser.add_argument(
         "--user", help="OTRS Username", type=str, required=user_required
     )
+    parser.add_argument(
+        "--limit",
+        help="connection limit",
+        type=int,
+        default=10
+    )
+
     parser.add_argument("--pw", help="OTRS Password", type=str, required=pass_required)
     args = parser.parse_args()
 
@@ -103,7 +110,7 @@ async def main():
     with open(args.ticketlist, "r") as tlfh:
         tl = tlfh.readlines()
 
-    connector = aiohttp.TCPConnector(limit=10)
+    connector = aiohttp.TCPConnector(limit=args.limit)
     try:
         tasks = []
         async with aiohttp.ClientSession(connector=connector) as session:
