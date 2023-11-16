@@ -44,23 +44,6 @@ async def fetch(session, url, ticket, username, password):
                     await tfh.write(article["Body"].encode(errors="replace"))
 
 
-async def toTxt(username, password, tl, otrs_url, API_URL):
-    connector = aiohttp.TCPConnector(limit=10)
-    try:
-        tasks = []
-        async with aiohttp.ClientSession(connector=connector) as session:
-            for ticket in tl:
-                url = f"{otrs_url}{API_URL}{ticket}"
-                print(f"Downloading {ticket}..")
-                task = asyncio.create_task(
-                    fetch(session, url, ticket, username, password)
-                )
-                tasks.append(task)
-            await asyncio.gather(*tasks)
-    except Exception as e:
-        print(f"Unable to fetch ticket {url}: {e}")
-
-
 async def main():
     API_URL = "/otrs/nph-genericinterface.pl/Webservice/getotrs/TicketGet/"
     CONFIG = f"{os.path.expanduser('~')}/.getotrs"
@@ -120,7 +103,20 @@ async def main():
     with open(args.ticketlist, "r") as tlfh:
         tl = tlfh.readlines()
 
-    await toTxt(username, password, tl, otrs_url, API_URL)
+    connector = aiohttp.TCPConnector(limit=10)
+    try:
+        tasks = []
+        async with aiohttp.ClientSession(connector=connector) as session:
+            for ticket in tl:
+                url = f"{otrs_url}{API_URL}{ticket}"
+                print(f"Downloading {ticket}..")
+                task = asyncio.create_task(
+                    fetch(session, url, ticket, username, password)
+                )
+                tasks.append(task)
+            await asyncio.gather(*tasks)
+    except Exception as e:
+        print(f"Unable to fetch ticket {url}: {e}")
 
 
 if __name__ == "__main__":
