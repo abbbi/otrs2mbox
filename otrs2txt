@@ -24,9 +24,10 @@ async def fetch(session, url, username, password):
 
 
 async def toTxt(username, password, tl, otrs_url, API_URL):
+    connector = aiohttp.TCPConnector(limit=50)
     try:
         tasks = []
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(connector=connector) as session:
             for ticket in tl:
                 url = f"{otrs_url}{API_URL}{ticket}"
                 print(f"Downloading {ticket}..")
