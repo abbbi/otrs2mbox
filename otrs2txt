@@ -7,24 +7,38 @@ import json
 import argparse
 import asyncio
 import aiohttp
+import aiofiles
 
 
-async def toTxt(username, password, url):
+async def fetch(session, url, username, password):
     payload = {
         "UserLogin": username,
         "Password": password,
         "AllArticles": "1",
         "Attachments": "0",
     }
+    async with session.get(url, params=payload, verify_ssl=False) as response:
+        if response.status != 200:
+            response.raise_for_status()
+        return await response.content.read()
+
+
+async def toTxt(username, password, tl, otrs_url, API_URL):
     try:
-        print("Downloading ticket Data..")
+        tasks = []
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=payload, verify_ssl=False) as r:
-                resp = await r.content.read()
-                await writeBox(resp)
+            for ticket in tl:
+                url = f"{otrs_url}{API_URL}{ticket}"
+                print(f"Downloading {ticket}..")
+                task = asyncio.create_task(fetch(session, url, username, password))
+                tasks.append(task)
+            results = await asyncio.gather(*tasks)
     except Exception as e:
         print(f"Unable to fetch ticket {url}: {e}")
         return
+
+    for value in results:
+        await writeBox(value)
 
 
 async def writeBox(resp):
@@ -43,25 +57,23 @@ async def writeBox(resp):
 
     target = f"{ticket}.txt"
 
-    tfh = open(target, "wb+")
-    for td in data["Ticket"]:
-        for article in td["Article"]:
-            # ignore system messages
-            if article["SenderType"] == "system":
-                continue
-            if (
-                "To provide the best possible support please send us the following latest logfiles"
-                in article["Body"]
-            ):
-                continue
+    async with aiofiles.open(target, "wb+") as tfh:
+        for td in data["Ticket"]:
+            for article in td["Article"]:
+                # ignore system messages
+                if article["SenderType"] == "system":
+                    continue
+                if (
+                    "To provide the best possible support please send us the following latest logfiles"
+                    in article["Body"]
+                ):
+                    continue
 
-            if article["Body"].lower() == "close":
-                continue
-            if article["Body"].lower() == "spam":
-                continue
-
-            tfh.write(article["Body"].encode(errors="replace"))
-    tfh.close()
+                if article["Body"].lower() == "close":
+                    continue
+                if article["Body"].lower() == "spam":
+                    continue
+                await tfh.write(article["Body"].encode(errors="replace"))
 
 
 async def main():
@@ -123,9 +135,7 @@ async def main():
     with open(args.ticketlist, "r") as tlfh:
         tl = tlfh.readlines()
 
-    for ticket in tl:
-        url = f"{otrs_url}{API_URL}{ticket}"
-        await toTxt(username, password, url)
+    await toTxt(username, password, tl, otrs_url, API_URL)
 
 
 if __name__ == "__main__":
